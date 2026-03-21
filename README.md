@@ -275,17 +275,7 @@ Allocate at least **24GB RAM** to Docker Desktop:
 - **FastMCP** — MCP server for Claude Code integration
 - **Pandas** — Data processing and aggregation
 
----
 
-## Team
-
-Built during a hackathon sprint:
-- **Manik Sharma** — Project lead, pipeline integration, Docker orchestration
-- **Syed** — Prompt management, scoring dispatcher, dashboard UI
-- **Igor (Игорь Тен)** — Claude-as-Judge integration, rubric design
-- **VinayaRekha** — Testing and evaluation
-
----
 
 ## License
 
