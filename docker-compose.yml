@@ -1,0 +1,59 @@
+services:
+  ollama-phi3:
+    image: ollama/ollama:latest
+    container_name: ollama-phi3
+    ports:
+      - "11434:11434"
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+          cpus: "4"
+    volumes:
+      - phi3_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  ollama-llama3:
+    image: ollama/ollama:latest
+    container_name: ollama-llama3
+    ports:
+      - "11435:11434"
+    deploy:
+      resources:
+        limits:
+          memory: 12G
+          cpus: "4"
+    volumes:
+      - llama3_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  ollama-mistral:
+    image: ollama/ollama:latest
+    container_name: ollama-mistral
+    ports:
+      - "11436:11434"
+    deploy:
+      resources:
+        limits:
+          memory: 12G
+          cpus: "4"
+    volumes:
+      - mistral_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  phi3_data:
+  llama3_data:
+  mistral_data:

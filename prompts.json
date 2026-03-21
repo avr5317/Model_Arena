@@ -1,0 +1,66 @@
+[
+  {
+    "id": "factual_1",
+    "category": "Factual",
+    "prompt": "What is the capital of Australia and when was it founded?",
+    "reference_answer": "The capital of Australia is Canberra. It was founded in 1913 as a purpose-built capital city.",
+    "expected_keywords": ["canberra", "1913"],
+    "max_tokens": 200
+  },
+  {
+    "id": "factual_2",
+    "category": "Factual",
+    "prompt": "What are the three states of matter and give one example of each?",
+    "reference_answer": "The three states of matter are solid (ice), liquid (water), and gas (steam or water vapor).",
+    "expected_keywords": ["solid", "liquid", "gas"],
+    "max_tokens": 200
+  },
+  {
+    "id": "reasoning_1",
+    "category": "Reasoning",
+    "prompt": "If a train travels 120km in 2 hours, then 80km in 1 hour, what is the average speed for the entire trip?",
+    "reference_answer": "The total distance is 200km and the total time is 3 hours, so the average speed is 66.67 km/h.",
+    "expected_keywords": ["200", "3", "66"],
+    "max_tokens": 300
+  },
+  {
+    "id": "reasoning_2",
+    "category": "Reasoning",
+    "prompt": "A farmer has 17 sheep. All but 9 die. How many sheep does the farmer have left?",
+    "reference_answer": "The farmer has 9 sheep left. The phrase 'all but 9' means 9 survive.",
+    "expected_keywords": ["9"],
+    "max_tokens": 200
+  },
+  {
+    "id": "creative_1",
+    "category": "Creative",
+    "prompt": "Write a haiku about Docker containers.",
+    "reference_answer": "Containers deploy, isolated worlds spinning, code ships silently.",
+    "expected_keywords": ["container", "deploy", "ship", "isolated", "docker", "image", "run", "build"],
+    "max_tokens": 100
+  },
+  {
+    "id": "creative_2",
+    "category": "Creative",
+    "prompt": "Write a one-paragraph story about a robot learning to cook.",
+    "reference_answer": "A robot in a kitchen learns to cook by experimenting with ingredients, making mistakes, and eventually creating a delicious meal.",
+    "expected_keywords": ["robot", "cook", "kitchen", "food", "recipe", "learn"],
+    "max_tokens": 300
+  },
+  {
+    "id": "coding_1",
+    "category": "Coding",
+    "prompt": "Write a Python function called is_palindrome that checks if a string is a palindrome. Return True or False.",
+    "reference_answer": "def is_palindrome(s): return s == s[::-1]",
+    "expected_keywords": ["def", "is_palindrome", "return"],
+    "max_tokens": 300
+  },
+  {
+    "id": "coding_2",
+    "category": "Coding",
+    "prompt": "Write a Python function called fibonacci that returns the first n Fibonacci numbers as a list.",
+    "reference_answer": "def fibonacci(n): result = [0, 1]; [result.append(result[-1] + result[-2]) for _ in range(n-2)]; return result[:n]",
+    "expected_keywords": ["def", "fibonacci", "return", "append"],
+    "max_tokens": 400
+  }
+]
