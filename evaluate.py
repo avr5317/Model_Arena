@@ -4,7 +4,6 @@ import re
 import subprocess
 import time
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 import requests
@@ -42,7 +41,6 @@ def wait_for_models(timeout=600):
                 if resp.ok:
                     tags = resp.json().get("models", [])
                     names = [m.get("name", "") for m in tags]
-                    # Ollama may store as "phi3:mini" or "phi3:mini" with tag
                     if any(model_name in n for n in names):
                         print(f"  [OK] {model_name} is ready")
                         del pending[model_name]
@@ -67,7 +65,6 @@ def get_container_stats(container_name):
             parts = result.stdout.strip().split(",")
             cpu = float(parts[0].replace("%", ""))
             mem_str = parts[1].split("/")[0].strip()
-            # Parse memory (e.g., "3.412GiB" or "512MiB")
             mem_mb = 0.0
             if "GiB" in mem_str:
                 mem_mb = float(mem_str.replace("GiB", "")) * 1024
@@ -104,7 +101,6 @@ def run_inference(model_name, prompt_text, max_tokens=200):
         eval_duration_ns = data.get("eval_duration", 1)
         tokens_per_sec = eval_count / (eval_duration_ns / 1e9) if eval_duration_ns > 0 else 0
 
-        # Get resource stats right after inference
         stats = get_container_stats(info["container"])
 
         return {
@@ -135,11 +131,9 @@ def compute_bleu1(reference, candidate):
     ref_counts = Counter(ref_tokens)
     cand_counts = Counter(cand_tokens)
 
-    # Clipped counts
     clipped = sum(min(cand_counts[w], ref_counts[w]) for w in cand_counts)
     precision = clipped / len(cand_tokens) if cand_tokens else 0
 
-    # Brevity penalty
     bp = min(1.0, len(cand_tokens) / len(ref_tokens)) if ref_tokens else 0
     return round(bp * precision, 4)
 
@@ -153,6 +147,36 @@ def compute_keyword_score(expected_keywords, response):
     return round(found / len(expected_keywords), 4)
 
 
+def compute_negated_penalty(negated_keywords, response):
+    """Returns a penalty [0, 1] based on negated keywords found. 0 = none found (good)."""
+    if not negated_keywords:
+        return 0.0
+    response_lower = response.lower()
+    found = sum(1 for kw in negated_keywords if kw.lower() in response_lower)
+    return round(found / len(negated_keywords), 4)
+
+
+def score_response(prompt_data, response_text):
+    """Route scoring based on the prompt's scoring_method field."""
+    method = prompt_data.get("scoring_method", "keyword")
+
+    if method == "coherence_only":
+        return {"keyword_accuracy": 1.0, "bleu1_score": 0.0}
+
+    if method == "exact":
+        ref = prompt_data.get("reference_answer", "").strip().lower()
+        matched = float(ref in response_text.lower()) if ref else 0.0
+        penalty = compute_negated_penalty(prompt_data.get("negated_keywords", []), response_text)
+        return {"keyword_accuracy": max(0.0, round(matched - penalty, 4)), "bleu1_score": 0.0}
+
+    # Default: keyword + BLEU
+    kw = compute_keyword_score(prompt_data.get("expected_keywords", []), response_text)
+    penalty = compute_negated_penalty(prompt_data.get("negated_keywords", []), response_text)
+    kw = max(0.0, round(kw - penalty * 0.5, 4))
+    bl = compute_bleu1(prompt_data.get("reference_answer", ""), response_text)
+    return {"keyword_accuracy": kw, "bleu1_score": bl}
+
+
 def evaluate_single(model_name, prompt_data):
     """Evaluate a single model on a single prompt."""
     result = run_inference(model_name, prompt_data["prompt"], prompt_data.get("max_tokens", 200))
@@ -161,6 +185,8 @@ def evaluate_single(model_name, prompt_data):
         return {
             "prompt_id": prompt_data["id"],
             "category": prompt_data["category"],
+            "difficulty": prompt_data.get("difficulty", "unknown"),
+            "scoring_method": prompt_data.get("scoring_method", "keyword"),
             "model": model_name,
             "error": result["error"],
             "latency_seconds": result.get("latency_seconds", 0),
@@ -170,14 +196,20 @@ def evaluate_single(model_name, prompt_data):
             "bleu1_score": 0,
             "cpu_percent": 0,
             "memory_mb": 0,
+            "judge_score": None,
+            "judge_explanation": "",
+            "judge_rubric_breakdown": {},
+            "judge_model": None,
             "response": "",
             "timestamp": datetime.now().isoformat(),
         }
 
     response_text = result["response"]
-    keyword_score = compute_keyword_score(prompt_data.get("expected_keywords", []), response_text)
-    bleu_score = compute_bleu1(prompt_data.get("reference_answer", ""), response_text)
 
+    # Syed's scoring dispatcher (handles coherence_only, exact, keyword+negated)
+    scores = score_response(prompt_data, response_text)
+
+    # Igor's Claude-as-Judge
     category = prompt_data["category"]
     prompt = prompt_data["prompt"]
     reference_answer = prompt_data.get("reference_answer", "")
@@ -191,13 +223,15 @@ def evaluate_single(model_name, prompt_data):
     return {
         "prompt_id": prompt_data["id"],
         "category": category,
+        "difficulty": prompt_data.get("difficulty", "unknown"),
+        "scoring_method": prompt_data.get("scoring_method", "keyword"),
         "model": model_name,
         "response": response_text,
         "latency_seconds": result["latency_seconds"],
         "tokens_per_second": result["tokens_per_second"],
         "token_count": result["token_count"],
-        "keyword_accuracy": keyword_score,
-        "bleu1_score": bleu_score,
+        "keyword_accuracy": scores["keyword_accuracy"],
+        "bleu1_score": scores["bleu1_score"],
         "cpu_percent": result["cpu_percent"],
         "memory_mb": result["memory_mb"],
         "judge_score": judge_result["score"],
@@ -209,7 +243,7 @@ def evaluate_single(model_name, prompt_data):
 
 
 def evaluate_all(available_models=None, progress_callback=None):
-    """Run all prompts against all available models (models parallelized per prompt)."""
+    """Run all prompts against all available models."""
     prompts = load_prompts()
     if available_models is None:
         available_models = list(MODELS.keys())
@@ -217,24 +251,16 @@ def evaluate_all(available_models=None, progress_callback=None):
     results = []
     total = len(prompts) * len(available_models)
     done = 0
-    lock = __import__("threading").Lock()
 
     for prompt_data in prompts:
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            futures = {
-                executor.submit(evaluate_single, model, prompt_data): model
-                for model in available_models
-            }
-            for future in as_completed(futures):
-                result = future.result()
-                results.append(result)
-                with lock:
-                    done += 1
-                    current_done = done
-                status = "OK" if not result.get("error") else result.get("error", "")
-                print(f"  [{current_done}/{total}] {result['model']} | {prompt_data['id']} | {status}")
-                if progress_callback:
-                    progress_callback(current_done, total, result["model"], prompt_data["id"])
+        for model in available_models:
+            result = evaluate_single(model, prompt_data)
+            results.append(result)
+            done += 1
+            status = "OK" if not result.get("error") else result.get("error", "")
+            print(f"  [{done}/{total}] {model} | {prompt_data['id']} | {status}")
+            if progress_callback:
+                progress_callback(done, total, model, prompt_data["id"])
 
     return results
 
