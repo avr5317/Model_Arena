@@ -193,7 +193,7 @@ st.dataframe(
         "Avg Latency (s)": "{:.2f}",
         "Avg Memory (MB)": "{:.0f}",
         "Composite Score": "{:.3f}",
-    }).background_gradient(subset=["Composite Score"], cmap="RdYlGn"),
+    }),
     use_container_width=True,
     hide_index=True,
 )
