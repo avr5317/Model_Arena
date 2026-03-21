@@ -2,10 +2,15 @@ import json
 import os
 import glob as glob_mod
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+
+import numpy as np
 
 st.set_page_config(page_title="Model Arena", page_icon="🏟️", layout="wide")
 
@@ -113,6 +118,10 @@ with st.sidebar:
     st.markdown("**Architecture**")
     st.code("3x Ollama Containers\n→ Evaluation Pipeline\n→ Streamlit Dashboard", language=None)
 
+    st.divider()
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        st.warning("ANTHROPIC_API_KEY not set — judge scores disabled.")
+
 # --- Load Data ---
 if selected_file:
     with open(selected_file) as f:
@@ -154,23 +163,49 @@ model_stats["norm_memory"] = 1 - normalize_series(model_stats["memory_mb"])  # L
 bleu_avg = df_valid.groupby("model")["bleu1_score"].mean()
 model_stats = model_stats.merge(bleu_avg.rename("avg_bleu"), left_on="model", right_index=True)
 model_stats["norm_bleu"] = normalize_series(model_stats["avg_bleu"])
-model_stats["composite_score"] = (
-    0.3 * model_stats["norm_speed"]
-    + 0.4 * model_stats["norm_accuracy"]
-    + 0.2 * model_stats["norm_bleu"]
-    + 0.1 * model_stats["norm_memory"]
+
+# Determine if judge scores are available
+has_judge_scores = (
+    "judge_score" in df_valid.columns
+    and df_valid["judge_score"].notna().any()
 )
+
+if has_judge_scores:
+    judge_avg = df_valid.groupby("model")["judge_score"].mean()
+    model_stats = model_stats.merge(judge_avg.rename("avg_judge"), left_on="model", right_index=True)
+    model_stats["norm_judge"] = normalize_series(model_stats["avg_judge"])
+    model_stats["composite_score"] = (
+        0.40 * model_stats["norm_judge"]
+        + 0.30 * model_stats["norm_speed"]
+        + 0.20 * model_stats["norm_bleu"]
+        + 0.10 * model_stats["norm_memory"]
+    )
+else:
+    model_stats["avg_judge"] = None
+    model_stats["composite_score"] = (
+        0.3 * model_stats["norm_speed"]
+        + 0.4 * model_stats["norm_accuracy"]
+        + 0.2 * model_stats["norm_bleu"]
+        + 0.1 * model_stats["norm_memory"]
+    )
+
 model_stats = model_stats.sort_values("composite_score", ascending=False)
 
 fastest = model_stats.loc[model_stats["tokens_per_second"].idxmax()]
-most_accurate = model_stats.loc[model_stats["keyword_accuracy"].idxmax()]
 best_overall = model_stats.iloc[0]
+
+if has_judge_scores:
+    most_accurate = model_stats.loc[model_stats["avg_judge"].idxmax()]
+    accuracy_label = f"{most_accurate['avg_judge']:.0%} judge"
+else:
+    most_accurate = model_stats.loc[model_stats["keyword_accuracy"].idxmax()]
+    accuracy_label = f"{most_accurate['keyword_accuracy']:.0%}"
 
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     st.metric("⚡ Fastest", fastest["model"], f"{fastest['tokens_per_second']:.1f} tok/s")
 with col2:
-    st.metric("🎯 Most Accurate", most_accurate["model"], f"{most_accurate['keyword_accuracy']:.0%}")
+    st.metric("🎯 Most Accurate", most_accurate["model"], accuracy_label)
 with col3:
     st.metric("🏆 Best Overall", best_overall["model"], f"Score: {best_overall['composite_score']:.2f}")
 with col4:
@@ -180,20 +215,34 @@ st.divider()
 
 # --- Leaderboard ---
 st.subheader("📋 Leaderboard")
-leaderboard = model_stats[["model", "tokens_per_second", "keyword_accuracy", "avg_bleu", "latency_seconds", "memory_mb", "composite_score"]].copy()
-leaderboard.columns = ["Model", "Avg Tokens/s", "Keyword Accuracy", "BLEU-1", "Avg Latency (s)", "Avg Memory (MB)", "Composite Score"]
-leaderboard.insert(0, "Rank", range(1, len(leaderboard) + 1))
-leaderboard = leaderboard.reset_index(drop=True)
-
-st.dataframe(
-    leaderboard.style.format({
+if has_judge_scores:
+    leaderboard = model_stats[["model", "tokens_per_second", "keyword_accuracy", "avg_bleu", "avg_judge", "latency_seconds", "memory_mb", "composite_score"]].copy()
+    leaderboard.columns = ["Model", "Avg Tokens/s", "Keyword Accuracy", "BLEU-1", "Judge Score", "Avg Latency (s)", "Avg Memory (MB)", "Composite Score"]
+    fmt = {
+        "Avg Tokens/s": "{:.1f}",
+        "Keyword Accuracy": "{:.1%}",
+        "BLEU-1": "{:.4f}",
+        "Judge Score": "{:.1%}",
+        "Avg Latency (s)": "{:.2f}",
+        "Avg Memory (MB)": "{:.0f}",
+        "Composite Score": "{:.3f}",
+    }
+else:
+    leaderboard = model_stats[["model", "tokens_per_second", "keyword_accuracy", "avg_bleu", "latency_seconds", "memory_mb", "composite_score"]].copy()
+    leaderboard.columns = ["Model", "Avg Tokens/s", "Keyword Accuracy", "BLEU-1", "Avg Latency (s)", "Avg Memory (MB)", "Composite Score"]
+    fmt = {
         "Avg Tokens/s": "{:.1f}",
         "Keyword Accuracy": "{:.1%}",
         "BLEU-1": "{:.4f}",
         "Avg Latency (s)": "{:.2f}",
         "Avg Memory (MB)": "{:.0f}",
         "Composite Score": "{:.3f}",
-    }),
+    }
+leaderboard.insert(0, "Rank", range(1, len(leaderboard) + 1))
+leaderboard = leaderboard.reset_index(drop=True)
+
+st.dataframe(
+    leaderboard.style.format(fmt),
     use_container_width=True,
     hide_index=True,
 )
@@ -222,7 +271,9 @@ with chart_col1:
 
 with chart_col2:
     st.subheader("🎯 Accuracy by Category")
-    # Radar chart
+    # Radar chart — use judge_score if available, else keyword_accuracy
+    radar_metric = "judge_score" if has_judge_scores else "keyword_accuracy"
+    radar_title = "Judge Score" if has_judge_scores else "Keyword Accuracy"
     categories = df_valid["category"].unique().tolist()
     models = df_valid["model"].unique().tolist()
     colors = ["#e94560", "#0f3460", "#533483"]
@@ -230,7 +281,7 @@ with chart_col2:
     fig_radar = go.Figure()
     for i, model in enumerate(models):
         model_data = df_valid[df_valid["model"] == model]
-        values = [model_data[model_data["category"] == cat]["keyword_accuracy"].mean()
+        values = [model_data[model_data["category"] == cat][radar_metric].mean()
                   for cat in categories]
         values.append(values[0])  # Close the polygon
         fig_radar.add_trace(go.Scatterpolar(
@@ -308,6 +359,47 @@ with chart_col4:
 
 st.divider()
 
+# --- Claude Judge Scores Heatmap ---
+if has_judge_scores:
+    st.subheader("🤖 Claude Judge Scores")
+
+    models_list = sorted(df_valid["model"].unique().tolist())
+    categories_list_hm = sorted(df_valid["category"].unique().tolist())
+
+    heatmap_data = []
+    for model in models_list:
+        row = []
+        for cat in categories_list_hm:
+            subset = df_valid[(df_valid["model"] == model) & (df_valid["category"] == cat)]
+            val = subset["judge_score"].mean() if not subset.empty and subset["judge_score"].notna().any() else None
+            row.append(val)
+        heatmap_data.append(row)
+
+    z_matrix = [[v if v is not None else 0 for v in row] for row in heatmap_data]
+    text_matrix = [[f"{v:.0%}" if v is not None else "N/A" for v in row] for row in heatmap_data]
+
+    fig_heatmap = px.imshow(
+        z_matrix,
+        x=categories_list_hm,
+        y=models_list,
+        color_continuous_scale="RdYlGn",
+        zmin=0,
+        zmax=1,
+        text_auto=False,
+        labels={"color": "Judge Score"},
+    )
+    fig_heatmap.update_traces(text=text_matrix, texttemplate="%{text}")
+    fig_heatmap.update_layout(
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font_color="#a0a0b0",
+        xaxis_title="Category",
+        yaxis_title="Model",
+        coloraxis_colorbar=dict(tickformat=".0%"),
+    )
+    st.plotly_chart(fig_heatmap, use_container_width=True)
+    st.divider()
+
 # --- Side-by-Side Response Viewer ---
 st.subheader("💬 Side-by-Side Response Comparison")
 
@@ -338,6 +430,20 @@ for prompt_id in prompts_in_view:
                 st.markdown(f"**{model}**")
                 st.caption(f"⏱️ {row['latency_seconds']:.2f}s | 🚀 {row['tokens_per_second']:.1f} tok/s")
                 st.caption(f"🎯 Keywords: {row['keyword_accuracy']:.0%} | BLEU: {row['bleu1_score']:.4f}")
+
+                judge_score = row.get("judge_score") if "judge_score" in row.index else None
+                if judge_score is not None and not (isinstance(judge_score, float) and np.isnan(judge_score)):
+                    st.caption(f"🤖 Judge: {judge_score:.0%}")
+                    judge_explanation = row.get("judge_explanation", "")
+                    judge_breakdown = row.get("judge_rubric_breakdown", {})
+                    if judge_explanation or judge_breakdown:
+                        with st.expander("Judge Details", expanded=False):
+                            if judge_explanation:
+                                st.write(judge_explanation)
+                            if judge_breakdown and isinstance(judge_breakdown, dict):
+                                for criterion, score in judge_breakdown.items():
+                                    st.progress(float(score), text=f"{criterion}: {score:.0%}")
+
                 st.text_area(
                     "Response",
                     value=row["response"],

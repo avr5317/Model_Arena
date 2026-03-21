@@ -5,6 +5,34 @@
     "prompt": "What is the capital of Australia?",
     "reference_answer": "The capital of Australia is Canberra.",
     "expected_keywords": ["canberra"],
+    "rubric_hints": "The answer must be Canberra, not Sydney or Melbourne.",
+    "max_tokens": 50
+  },
+  {
+    "id": "factual_2",
+    "category": "Factual",
+    "prompt": "In what year did the Berlin Wall fall?",
+    "reference_answer": "The Berlin Wall fell in 1989.",
+    "expected_keywords": ["1989"],
+    "rubric_hints": "The specific year 1989 must be stated.",
+    "max_tokens": 50
+  },
+  {
+    "id": "factual_3",
+    "category": "Factual",
+    "prompt": "How many bones are in the adult human body?",
+    "reference_answer": "An adult human body has 206 bones.",
+    "expected_keywords": ["206"],
+    "rubric_hints": "The answer is 206 bones.",
+    "max_tokens": 50
+  },
+  {
+    "id": "factual_4",
+    "category": "Factual",
+    "prompt": "What is the chemical symbol for gold?",
+    "reference_answer": "The chemical symbol for gold is Au.",
+    "expected_keywords": ["au"],
+    "rubric_hints": "The answer is Au, from the Latin 'aurum'.",
     "max_tokens": 50
   },
   {
@@ -13,7 +41,35 @@
     "prompt": "What is 120 divided by 3?",
     "reference_answer": "120 divided by 3 is 40.",
     "expected_keywords": ["40"],
+    "rubric_hints": "Simple arithmetic; the answer is exactly 40.",
     "max_tokens": 50
+  },
+  {
+    "id": "reasoning_2",
+    "category": "Reasoning",
+    "prompt": "All roses are flowers. All flowers need water. Do roses need water? Explain your reasoning.",
+    "reference_answer": "Yes, roses need water. Since all roses are flowers and all flowers need water, by transitivity roses need water.",
+    "expected_keywords": ["yes", "water"],
+    "rubric_hints": "This is a classic syllogism. The response should identify the transitive inference explicitly.",
+    "max_tokens": 100
+  },
+  {
+    "id": "reasoning_3",
+    "category": "Reasoning",
+    "prompt": "A train travels 240 miles in 3 hours. What is its average speed in miles per hour?",
+    "reference_answer": "The train's average speed is 80 miles per hour (240 / 3 = 80).",
+    "expected_keywords": ["80"],
+    "rubric_hints": "Speed = distance / time = 240 / 3 = 80 mph.",
+    "max_tokens": 80
+  },
+  {
+    "id": "reasoning_4",
+    "category": "Reasoning",
+    "prompt": "Why does a mirror appear to flip left and right but not up and down?",
+    "reference_answer": "A mirror doesn't truly flip left/right — it reverses front-to-back (depth). We perceive this as left-right reversal because we mentally rotate ourselves to face the mirror image, swapping left and right in the process.",
+    "expected_keywords": ["depth", "front", "back"],
+    "rubric_hints": "The key insight is that the mirror reverses depth (front-to-back), not left-right per se. The perceived left-right flip comes from our mental rotation when comparing ourselves to the reflection.",
+    "max_tokens": 150
   },
   {
     "id": "creative_1",
@@ -21,7 +77,35 @@
     "prompt": "Write a haiku about Docker containers.",
     "reference_answer": "Containers deploy, isolated worlds spinning, code ships silently.",
     "expected_keywords": ["container", "docker", "image", "run", "build", "deploy"],
+    "rubric_hints": "Should be 5-7-5 syllable structure, thematically tied to containers or DevOps.",
     "max_tokens": 50
+  },
+  {
+    "id": "creative_2",
+    "category": "Creative",
+    "prompt": "Write a two-sentence horror story.",
+    "reference_answer": "The last person on Earth sat alone in a room. There was a knock at the door.",
+    "expected_keywords": [],
+    "rubric_hints": "Reward dread and implication over explicit gore. Surprise or an unexpected twist is valuable.",
+    "max_tokens": 80
+  },
+  {
+    "id": "creative_3",
+    "category": "Creative",
+    "prompt": "Describe the color blue to someone who has never been able to see.",
+    "reference_answer": "Blue is the feeling of cool water on your skin on a hot day, the calm before a summer storm, the vast openness of a horizon without end.",
+    "expected_keywords": [],
+    "rubric_hints": "Should use non-visual sensory analogies (sound, touch, temperature, emotion). Reward evocative and original metaphors.",
+    "max_tokens": 120
+  },
+  {
+    "id": "creative_4",
+    "category": "Creative",
+    "prompt": "Write the opening line of a novel that would make a reader desperate to read the next sentence.",
+    "reference_answer": "The morning my mother came back from the dead, she was annoyed that no one had watered her plants.",
+    "expected_keywords": [],
+    "rubric_hints": "Reward immediate tension, intrigue, or subverted expectation. The line should raise a question the reader needs answered.",
+    "max_tokens": 80
   },
   {
     "id": "coding_1",
@@ -29,6 +113,34 @@
     "prompt": "Write a Python function called is_palindrome that returns True if a string is a palindrome.",
     "reference_answer": "def is_palindrome(s): return s == s[::-1]",
     "expected_keywords": ["def", "is_palindrome", "return"],
+    "rubric_hints": "Should handle empty strings. Slice reversal (s[::-1]) or a loop are both acceptable.",
     "max_tokens": 100
+  },
+  {
+    "id": "coding_2",
+    "category": "Coding",
+    "prompt": "Write a Python function called fibonacci that returns the nth Fibonacci number using memoization.",
+    "reference_answer": "from functools import lru_cache\n@lru_cache(maxsize=None)\ndef fibonacci(n):\n    if n <= 1: return n\n    return fibonacci(n-1) + fibonacci(n-2)",
+    "expected_keywords": ["def", "fibonacci", "return"],
+    "rubric_hints": "Should use @lru_cache, functools.cache, or a manual dict cache. Recursion without memoization scores low on best_practices.",
+    "max_tokens": 120
+  },
+  {
+    "id": "coding_3",
+    "category": "Coding",
+    "prompt": "Write a Python context manager class called Timer that prints the elapsed time when the block exits.",
+    "reference_answer": "import time\nclass Timer:\n    def __enter__(self):\n        self.start = time.perf_counter()\n        return self\n    def __exit__(self, *args):\n        print(f'Elapsed: {time.perf_counter() - self.start:.3f}s')",
+    "expected_keywords": ["class", "Timer", "__enter__", "__exit__"],
+    "rubric_hints": "Must implement __enter__ and __exit__ dunder methods. Should use time.perf_counter or time.time.",
+    "max_tokens": 150
+  },
+  {
+    "id": "coding_4",
+    "category": "Coding",
+    "prompt": "Write a Python one-liner using list comprehension that returns the squares of all even numbers from 1 to 20.",
+    "reference_answer": "[x**2 for x in range(1, 21) if x % 2 == 0]",
+    "expected_keywords": ["for", "if", "range"],
+    "rubric_hints": "Must be a list comprehension (not a for-loop). Should filter even numbers and square them.",
+    "max_tokens": 80
   }
 ]

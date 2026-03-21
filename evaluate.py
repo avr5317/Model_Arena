@@ -8,6 +8,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 import requests
+from dotenv import load_dotenv
+
+from claude_judge import ClaudeJudge
+
+load_dotenv()
+
+_judge = ClaudeJudge() if os.environ.get("ANTHROPIC_API_KEY") else None
 
 MODELS = {
     "phi3:mini": {"url": "http://localhost:11434", "container": "ollama-phi3"},
@@ -171,9 +178,19 @@ def evaluate_single(model_name, prompt_data):
     keyword_score = compute_keyword_score(prompt_data.get("expected_keywords", []), response_text)
     bleu_score = compute_bleu1(prompt_data.get("reference_answer", ""), response_text)
 
+    category = prompt_data["category"]
+    prompt = prompt_data["prompt"]
+    reference_answer = prompt_data.get("reference_answer", "")
+    rubric_hints = prompt_data.get("rubric_hints", "")
+
+    if _judge:
+        judge_result = _judge.evaluate_response(category, prompt, response_text, reference_answer, rubric_hints)
+    else:
+        judge_result = {"score": None, "explanation": "Judge unavailable", "rubric_breakdown": {}}
+
     return {
         "prompt_id": prompt_data["id"],
-        "category": prompt_data["category"],
+        "category": category,
         "model": model_name,
         "response": response_text,
         "latency_seconds": result["latency_seconds"],
@@ -183,12 +200,16 @@ def evaluate_single(model_name, prompt_data):
         "bleu1_score": bleu_score,
         "cpu_percent": result["cpu_percent"],
         "memory_mb": result["memory_mb"],
+        "judge_score": judge_result["score"],
+        "judge_explanation": judge_result["explanation"],
+        "judge_rubric_breakdown": judge_result["rubric_breakdown"],
+        "judge_model": _judge.model if _judge else None,
         "timestamp": datetime.now().isoformat(),
     }
 
 
 def evaluate_all(available_models=None, progress_callback=None):
-    """Run all prompts against all available models."""
+    """Run all prompts against all available models (models parallelized per prompt)."""
     prompts = load_prompts()
     if available_models is None:
         available_models = list(MODELS.keys())
@@ -196,16 +217,24 @@ def evaluate_all(available_models=None, progress_callback=None):
     results = []
     total = len(prompts) * len(available_models)
     done = 0
+    lock = __import__("threading").Lock()
 
     for prompt_data in prompts:
-        for model in available_models:
-            result = evaluate_single(model, prompt_data)
-            results.append(result)
-            done += 1
-            status = "OK" if not result.get("error") else result.get("error", "")
-            print(f"  [{done}/{total}] {model} | {prompt_data['id']} | {status}")
-            if progress_callback:
-                progress_callback(done, total, model, prompt_data["id"])
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(evaluate_single, model, prompt_data): model
+                for model in available_models
+            }
+            for future in as_completed(futures):
+                result = future.result()
+                results.append(result)
+                with lock:
+                    done += 1
+                    current_done = done
+                status = "OK" if not result.get("error") else result.get("error", "")
+                print(f"  [{current_done}/{total}] {result['model']} | {prompt_data['id']} | {status}")
+                if progress_callback:
+                    progress_callback(current_done, total, result["model"], prompt_data["id"])
 
     return results
 
