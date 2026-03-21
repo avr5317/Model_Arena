@@ -21,6 +21,12 @@ MODELS = {
     "mistral:7b": {"url": "http://localhost:11436", "container": "ollama-mistral"},
 }
 
+
+def set_models(models_dict: dict) -> None:
+    """Replace the MODELS registry at runtime (used by dynamic pipeline)."""
+    global MODELS
+    MODELS = models_dict
+
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 PROMPTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompts.json")
 
@@ -242,9 +248,11 @@ def evaluate_single(model_name, prompt_data):
     }
 
 
-def evaluate_all(available_models=None, progress_callback=None):
-    """Run all prompts against all available models."""
+def evaluate_all(available_models=None, progress_callback=None, categories=None):
+    """Run all prompts against all available models. Optionally filter by categories."""
     prompts = load_prompts()
+    if categories:
+        prompts = [p for p in prompts if p.get("category", "").lower() in [c.lower() for c in categories]]
     if available_models is None:
         available_models = list(MODELS.keys())
 

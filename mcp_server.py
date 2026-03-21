@@ -30,11 +30,15 @@ from evaluate import (
     evaluate_all,
     save_results,
     wait_for_models,
+    set_models,
     PROMPTS_FILE,
     RESULTS_DIR,
     MODELS,
 )
 from claude_judge import ClaudeJudge
+from repo_analyzer import analyze_github_url
+from model_discovery import search_models
+from container_manager import setup_containers
 
 mcp = FastMCP("model-arena")
 
@@ -263,6 +267,75 @@ def compare_models(category: str | None = None) -> str:
     if not leaderboard:
         return "No valid results to rank."
     return json.dumps(leaderboard, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Tools — Developer Pipeline (new direction)
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def analyze_repo(github_url: str) -> str:
+    """Analyze a GitHub repository with Claude Sonnet to determine the best LLM task and generate tailored eval prompts."""
+    try:
+        analysis = analyze_github_url(github_url)
+        return json.dumps(analysis, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def find_models(task: str, size: str = "medium", count: int = 3) -> str:
+    """Search HuggingFace for suitable models matching a task type. Tasks: code-generation, text-generation, summarization, question-answering, translation, classification."""
+    models = search_models(task, size, count)
+    return json.dumps(models, indent=2)
+
+
+@mcp.tool()
+def setup_arena(github_url: str) -> str:
+    """Full pipeline: analyze repo, find models, start containers, generate prompts, run evaluation."""
+    try:
+        # Step 1: Analyze repo
+        analysis = analyze_github_url(github_url)
+        task = analysis.get("llm_task", "text-generation")
+        size = analysis.get("size_constraint", "medium")
+
+        # Step 2: Find models
+        models = search_models(task, size, count=3)
+        model_pull_names = [m["pull_name"] for m in models]
+
+        # Step 3: Write generated prompts
+        suggested = analysis.get("suggested_prompts", [])
+        if suggested:
+            for p in suggested:
+                p.setdefault("system_prompt", None)
+                p.setdefault("negated_keywords", [])
+                p.setdefault("test_cases", [])
+                p.setdefault("tags", ["auto-generated"])
+                p.setdefault("notes", p.get("rubric_hints", ""))
+            _save_prompts(suggested)
+
+        # Step 4: Start containers and pull models
+        models_dict = setup_containers(model_pull_names)
+        if not models_dict:
+            return json.dumps({"error": "Failed to set up containers"})
+
+        set_models(models_dict)
+
+        # Step 5: Run evaluation
+        results = evaluate_all(available_models=list(models_dict.keys()))
+        path = save_results(results)
+
+        return json.dumps({
+            "status": "complete",
+            "project_summary": analysis.get("project_summary", ""),
+            "task": task,
+            "models": list(models_dict.keys()),
+            "prompts_count": len(suggested),
+            "results_count": len(results),
+            "results_file": os.path.basename(path),
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 
 # ---------------------------------------------------------------------------

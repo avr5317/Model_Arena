@@ -40,6 +40,31 @@ RUBRICS = {
         },
         "description": "Code generation tasks requiring correct, syntactically valid, idiomatic code.",
     },
+    "Code-Generation": {
+        "criteria": {
+            "correctness": 0.40,
+            "language_appropriateness": 0.25,
+            "idiomatic_code": 0.20,
+            "documentation": 0.15,
+        },
+        "description": "Code generation for a specific project — code must be correct, idiomatic, and well-documented.",
+    },
+    "Summarization": {
+        "criteria": {
+            "key_point_coverage": 0.40,
+            "conciseness": 0.30,
+            "coherence": 0.30,
+        },
+        "description": "Text summarization tasks requiring coverage of key points with concise, coherent output.",
+    },
+    "QA": {
+        "criteria": {
+            "factual_accuracy": 0.50,
+            "relevance": 0.30,
+            "completeness": 0.20,
+        },
+        "description": "Question-answering tasks requiring accurate, relevant, and complete responses.",
+    },
 }
 
 _FALLBACK = {"score": None, "explanation": "Judge unavailable", "rubric_breakdown": {}}

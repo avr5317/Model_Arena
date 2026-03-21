@@ -17,6 +17,16 @@ st.set_page_config(page_title="Model Arena", page_icon="🏟️", layout="wide")
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 PROMPTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompts.json")
 
+# Initialize session state for onboarding pipeline
+if "pipeline_state" not in st.session_state:
+    st.session_state.pipeline_state = "input"  # input -> analyzing -> selecting -> downloading -> ready
+if "analysis" not in st.session_state:
+    st.session_state.analysis = None
+if "selected_models" not in st.session_state:
+    st.session_state.selected_models = []
+if "dynamic_models_dict" not in st.session_state:
+    st.session_state.dynamic_models_dict = None
+
 # --- Custom CSS ---
 st.markdown("""
 <style>
@@ -71,19 +81,237 @@ def normalize_series(s):
     return (s - s.min()) / (s.max() - s.min())
 
 
+# ---------------------------------------------------------------------------
+# Onboarding Flow — GitHub URL → Analysis → Model Selection → Download
+# ---------------------------------------------------------------------------
+
+if st.session_state.pipeline_state == "input":
+    st.title("🏟️ Model Arena")
+    st.caption("Find the best local LLM for your project — powered by Claude Sonnet + HuggingFace")
+
+    st.markdown("---")
+
+    col_left, col_center, col_right = st.columns([1, 2, 1])
+    with col_center:
+        st.markdown("### Paste your GitHub repository URL")
+        st.markdown("We'll analyze your codebase with Claude Sonnet, find the best matching LLMs on HuggingFace, and evaluate them locally.")
+
+        github_url = st.text_input("GitHub URL", placeholder="https://github.com/user/project", label_visibility="collapsed")
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("🔍 Analyze Repository", use_container_width=True, type="primary", disabled=not github_url):
+                with st.spinner("Fetching repo and analyzing with Claude Sonnet..."):
+                    try:
+                        from repo_analyzer import analyze_github_url
+                        analysis = analyze_github_url(github_url)
+                        st.session_state.analysis = analysis
+                        st.session_state.github_url = github_url
+                        st.session_state.pipeline_state = "analyzing"
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Analysis failed: {e}")
+        with col_b:
+            if st.button("⏩ Skip to Dashboard", use_container_width=True):
+                st.session_state.pipeline_state = "ready"
+                st.rerun()
+
+    st.stop()
+
+elif st.session_state.pipeline_state == "analyzing":
+    st.title("🏟️ Model Arena")
+    analysis = st.session_state.analysis
+
+    st.markdown("### Analysis Results")
+    st.info(f"**Repository:** {st.session_state.get('github_url', '')}")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Detected Task", analysis.get("llm_task", "unknown"))
+    with col2:
+        st.metric("Primary Language", analysis.get("primary_language", "unknown"))
+    with col3:
+        st.metric("Generated Prompts", len(analysis.get("suggested_prompts", [])))
+
+    st.markdown(f"**Summary:** {analysis.get('project_summary', '')}")
+    st.markdown(f"**Why this task:** {analysis.get('task_rationale', '')}")
+
+    with st.expander("View Generated Prompts", expanded=False):
+        for p in analysis.get("suggested_prompts", []):
+            st.markdown(f"- **[{p.get('category', '')}]** {p.get('prompt', '')[:120]}")
+
+    st.markdown("---")
+    st.markdown("### Recommended Models")
+    st.write("Searching HuggingFace for the best models...")
+
+    from model_discovery import search_models
+    task = analysis.get("llm_task", "text-generation")
+    size = analysis.get("size_constraint", "medium")
+    models = search_models(task, size, count=3)
+
+    st.session_state.discovered_models = models
+
+    for i, m in enumerate(models):
+        st.markdown(f"**{i+1}. {m['name']}** — {m.get('params', '?')} params ({m['source']})")
+
+    st.markdown("---")
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        if st.button("✅ Proceed with these models", use_container_width=True, type="primary"):
+            st.session_state.selected_models = models
+            st.session_state.pipeline_state = "downloading"
+            st.rerun()
+    with col_b:
+        if st.button("🔄 Re-analyze", use_container_width=True):
+            st.session_state.pipeline_state = "input"
+            st.rerun()
+    with col_c:
+        if st.button("⏩ Skip to Dashboard", use_container_width=True):
+            st.session_state.pipeline_state = "ready"
+            st.rerun()
+
+    st.stop()
+
+elif st.session_state.pipeline_state == "downloading":
+    st.title("🏟️ Model Arena")
+    st.markdown("### Setting up Docker containers and pulling models...")
+
+    models = st.session_state.selected_models
+    analysis = st.session_state.analysis
+
+    # Write generated prompts to prompts.json
+    suggested = analysis.get("suggested_prompts", [])
+    if suggested:
+        # Ensure each prompt has all required fields
+        for p in suggested:
+            p.setdefault("system_prompt", None)
+            p.setdefault("negated_keywords", [])
+            p.setdefault("test_cases", [])
+            p.setdefault("tags", ["auto-generated"])
+            p.setdefault("notes", p.get("rubric_hints", ""))
+        save_prompts(suggested)
+        st.success(f"Saved {len(suggested)} tailored prompts to prompts.json")
+
+    progress_area = st.empty()
+    status_container = st.container()
+
+    with status_container:
+        with st.status("Starting containers and pulling models...", expanded=True) as status:
+            from container_manager import setup_containers
+
+            st.write(f"Setting up {len(models)} containers...")
+            model_pull_names = [m["pull_name"] for m in models]
+
+            models_dict = setup_containers(model_pull_names)
+
+            if models_dict:
+                st.session_state.dynamic_models_dict = models_dict
+                status.update(label="Containers ready! Models downloaded.", state="complete")
+                st.success(f"Ready: {list(models_dict.keys())}")
+
+                # Set up evaluate.py with dynamic models
+                from evaluate import set_models
+                set_models(models_dict)
+
+                st.session_state.pipeline_state = "ready"
+                st.rerun()
+            else:
+                status.update(label="Container setup failed", state="error")
+                st.error("Failed to set up containers. Check Docker Desktop is running.")
+                if st.button("🔄 Retry"):
+                    st.rerun()
+
+    st.stop()
+
+
+# ---------------------------------------------------------------------------
+# Main Dashboard (shown when pipeline_state == "ready")
+# ---------------------------------------------------------------------------
+
 # --- Header ---
 st.title("🏟️ Model Arena")
-st.caption("Local LLM Evaluation Platform — Compare models side-by-side with automated metrics")
+
+# Detect if we came through the onboarding pipeline
+_from_pipeline = bool(st.session_state.dynamic_models_dict)
+_pipeline_models = st.session_state.dynamic_models_dict or {}
+_analysis = st.session_state.analysis
+
+if _from_pipeline:
+    from evaluate import set_models
+    set_models(_pipeline_models)
+    st.caption(f"Evaluating models for: **{st.session_state.get('github_url', '')}**")
+else:
+    st.caption("Local LLM Evaluation Platform — Compare models side-by-side with automated metrics")
+
+# --- Show loaded models + run evaluation banner (if from pipeline and no results yet) ---
+if _from_pipeline and "eval_ran" not in st.session_state:
+    st.markdown("---")
+    st.subheader("Loaded Models")
+    model_cols = st.columns(len(_pipeline_models))
+    for i, (model_name, info) in enumerate(_pipeline_models.items()):
+        with model_cols[i]:
+            st.metric(f"Model {i+1}", model_name)
+            st.caption(f"Container: `{info['container']}` | Port: {info['url'].split(':')[-1]}")
+
+    if _analysis:
+        with st.expander("Repository Analysis", expanded=False):
+            st.markdown(f"**Summary:** {_analysis.get('project_summary', '')}")
+            st.markdown(f"**Task:** {_analysis.get('llm_task', '')} — {_analysis.get('task_rationale', '')}")
+            st.markdown(f"**Prompts:** {len(_analysis.get('suggested_prompts', []))} tailored prompts generated")
+
+    st.markdown("---")
+    # Determine which categories to evaluate based on detected task
+    _task = _analysis.get("llm_task", "") if _analysis else ""
+    from repo_analyzer import TASK_TO_CATEGORIES
+    _eval_categories = TASK_TO_CATEGORIES.get(_task, None)
+    if _eval_categories:
+        st.info(f"Task: **{_task}** — evaluating categories: {', '.join(_eval_categories)}")
+
+    if st.button("🚀 Run Evaluation on These Models", use_container_width=True, type="primary"):
+        with st.status("Running evaluation...", expanded=True) as status:
+            from evaluate import evaluate_all, save_results
+            model_names = list(_pipeline_models.keys())
+            st.write(f"Evaluating {len(model_names)} models: {', '.join(model_names)}")
+            if _eval_categories:
+                st.write(f"Filtering to categories: {', '.join(_eval_categories)}")
+            progress_bar = st.progress(0)
+            progress_text = st.empty()
+
+            def update_progress(done, total, model, prompt_id):
+                progress_bar.progress(done / total)
+                progress_text.text(f"{done}/{total}: {model} | {prompt_id}")
+
+            results = evaluate_all(model_names, progress_callback=update_progress, categories=_eval_categories)
+            filepath = save_results(results)
+            status.update(label="Evaluation complete!", state="complete")
+            st.success(f"Saved {len(results)} results")
+            st.session_state.eval_ran = True
+            st.rerun()
+    st.stop()
 
 # --- Sidebar ---
 with st.sidebar:
     st.header("Controls")
 
+    if st.button("🔄 New Repository", use_container_width=True):
+        # Reset pipeline state to start fresh
+        st.session_state.pipeline_state = "input"
+        st.session_state.analysis = None
+        st.session_state.selected_models = []
+        st.session_state.dynamic_models_dict = None
+        if "eval_ran" in st.session_state:
+            del st.session_state.eval_ran
+        st.rerun()
+
     if st.button("🚀 Run New Evaluation", use_container_width=True):
         with st.status("Running evaluation...", expanded=True) as status:
             st.write("Checking model availability...")
-            from evaluate import wait_for_models, evaluate_all, save_results
-            available = wait_for_models(timeout=300)
+            from evaluate import wait_for_models, evaluate_all, save_results, set_models
+            if _from_pipeline:
+                set_models(_pipeline_models)
+                available = list(_pipeline_models.keys())
+            else:
+                available = wait_for_models(timeout=300)
             if not available:
                 st.error("No models available. Make sure containers are running.")
             else:
@@ -95,7 +323,12 @@ with st.sidebar:
                     progress_bar.progress(done / total)
                     progress_text.text(f"{done}/{total}: {model} | {prompt_id}")
 
-                results = evaluate_all(available, progress_callback=update_progress)
+                # Filter by task categories if from pipeline
+                _sidebar_categories = None
+                if _from_pipeline and _analysis:
+                    from repo_analyzer import TASK_TO_CATEGORIES
+                    _sidebar_categories = TASK_TO_CATEGORIES.get(_analysis.get("llm_task", ""), None)
+                results = evaluate_all(available, progress_callback=update_progress, categories=_sidebar_categories)
                 filepath = save_results(results)
                 status.update(label="Evaluation complete!", state="complete")
                 st.success(f"Saved {len(results)} results")
