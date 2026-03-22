@@ -267,6 +267,8 @@ if _from_pipeline and "eval_ran" not in st.session_state:
     if _eval_categories:
         st.info(f"Task: **{_task}** — evaluating categories: {', '.join(_eval_categories)}")
 
+    pipeline_run_name = st.text_input("Run name (optional)", placeholder="Baseline", key="pipeline_run_name")
+
     if st.button("🚀 Run Evaluation on These Models", use_container_width=True, type="primary"):
         with st.status("Running evaluation...", expanded=True) as status:
             from evaluate import evaluate_all, save_results
@@ -282,7 +284,7 @@ if _from_pipeline and "eval_ran" not in st.session_state:
                 progress_text.text(f"{done}/{total}: {model} | {prompt_id}")
 
             results = evaluate_all(model_names, progress_callback=update_progress, categories=_eval_categories)
-            filepath = save_results(results)
+            filepath = save_results(results, run_name=pipeline_run_name, repository_url=st.session_state.get("github_url"))
             status.update(label="Evaluation complete!", state="complete")
             st.success(f"Saved {len(results)} results")
             st.session_state.eval_ran = True
@@ -302,6 +304,8 @@ with st.sidebar:
         if "eval_ran" in st.session_state:
             del st.session_state.eval_ran
         st.rerun()
+
+    sidebar_run_name = st.text_input("Run name (optional)", placeholder="Prompt revision", key="sidebar_run_name")
 
     if st.button("🚀 Run New Evaluation", use_container_width=True):
         with st.status("Running evaluation...", expanded=True) as status:
@@ -329,7 +333,7 @@ with st.sidebar:
                     from repo_analyzer import TASK_TO_CATEGORIES
                     _sidebar_categories = TASK_TO_CATEGORIES.get(_analysis.get("llm_task", ""), None)
                 results = evaluate_all(available, progress_callback=update_progress, categories=_sidebar_categories)
-                filepath = save_results(results)
+                filepath = save_results(results, run_name=sidebar_run_name, repository_url=st.session_state.get("github_url") if _from_pipeline else None)
                 status.update(label="Evaluation complete!", state="complete")
                 st.success(f"Saved {len(results)} results")
                 st.rerun()
@@ -411,6 +415,13 @@ with st.sidebar:
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
         st.warning("ANTHROPIC_API_KEY not set — judge scores disabled.")
+
+# Comparison runs before legacy leaderboard early exits, including failed runs.
+view = st.radio("Dashboard view", ["Results", "Compare runs"], horizontal=True)
+if view == "Compare runs":
+    from arena.comparison_ui import render_comparison
+    render_comparison(result_files)
+    st.stop()
 
 # --- Load Data ---
 if selected_file:

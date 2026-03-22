@@ -10,6 +10,7 @@ import requests
 from dotenv import load_dotenv
 
 from claude_judge import ClaudeJudge
+from arena.run_store import EvaluationResults, capture_metadata, save_run
 
 load_dotenv()
 
@@ -114,6 +115,9 @@ def run_inference(model_name, prompt_text, max_tokens=200):
             "latency_seconds": round(elapsed, 3),
             "tokens_per_second": round(tokens_per_sec, 2),
             "token_count": eval_count,
+            "load_seconds": data.get("load_duration", 0) / 1e9 if "load_duration" in data else None,
+            "prompt_eval_seconds": data.get("prompt_eval_duration", 0) / 1e9 if "prompt_eval_duration" in data else None,
+            "generation_seconds": data.get("eval_duration", 0) / 1e9 if "eval_duration" in data else None,
             "cpu_percent": stats["cpu_percent"],
             "memory_mb": stats["memory_mb"],
         }
@@ -236,6 +240,9 @@ def evaluate_single(model_name, prompt_data):
         "latency_seconds": result["latency_seconds"],
         "tokens_per_second": result["tokens_per_second"],
         "token_count": result["token_count"],
+        "load_seconds": result.get("load_seconds"),
+        "prompt_eval_seconds": result.get("prompt_eval_seconds"),
+        "generation_seconds": result.get("generation_seconds"),
         "keyword_accuracy": scores["keyword_accuracy"],
         "bleu1_score": scores["bleu1_score"],
         "cpu_percent": result["cpu_percent"],
@@ -256,7 +263,12 @@ def evaluate_all(available_models=None, progress_callback=None, categories=None)
     if available_models is None:
         available_models = list(MODELS.keys())
 
-    results = []
+    # Snapshot the actual filtered prompt set before inference begins.
+    metadata = capture_metadata(
+        prompts, available_models, getattr(_judge, "model", None),
+        os.path.dirname(os.path.abspath(__file__)),
+    )
+    results = EvaluationResults(metadata=metadata)
     total = len(prompts) * len(available_models)
     done = 0
 
@@ -273,13 +285,9 @@ def evaluate_all(available_models=None, progress_callback=None, categories=None)
     return results
 
 
-def save_results(results):
-    """Save results to a timestamped JSON file."""
-    os.makedirs(RESULTS_DIR, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filepath = os.path.join(RESULTS_DIR, f"eval_{timestamp}.json")
-    with open(filepath, "w") as f:
-        json.dump(results, f, indent=2)
+def save_results(results, run_name=None, repository_url=None):
+    """Save the original result-list format plus optional run metadata."""
+    filepath = save_run(results, RESULTS_DIR, run_name, repository_url)
     print(f"  Results saved to {filepath}")
     return filepath
 
